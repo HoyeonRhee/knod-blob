@@ -15,6 +15,8 @@ SRC_core	:= src/default.S
 SRC_ipsec	:= src/ipsec.S
 SRC_bpf		:= $(filter-out $(SRC_core) $(SRC_ipsec),$(wildcard src/*.S))
 
+SRC_bpf-persistent := $(SRC_bpf)
+
 ABI_HDR		:= include/uapi/linux/knod_blob.h
 BUILD		:= build
 # The preprocessor flags decide what goes in - a probe, or no probe - and they
@@ -31,7 +33,7 @@ EXTRA_CPPFLAGS	?= $(shell cat $(FLAGS_STAMP) 2>/dev/null)
 # .inc files that the .S files include, and leaving them out meant editing a
 # prologue or an epilogue built nothing.
 DEPS		:= $(wildcard src/*.S) $(wildcard src/*.inc) \
-		   $(wildcard src/ipsec/*) $(ABI_HDR) $(FLAGS_STAMP)
+		   $(wildcard src/ipsec/*) $(ABI_HDR) $(FLAGS_STAMP) include/uapi/linux/knod_persistent.h
 FIRMWARE_DIR	?= /lib/firmware/knod
 
 # gfx10 and later default to wave32 and the JIT runs wave64, so they have to
@@ -65,6 +67,7 @@ $(BUILD)/$(1).$(2).s: $(DEPS) | $(BUILD)
 	$(ASM_CPP) -Isrc -Iinclude/uapi -Werror=undef -Werror=macro-redefined \
 		$(EXTRA_CPPFLAGS) \
 		-DKNOD_BLOB_LINK=KNOD_BLOB_LINK_SPLICE -D__ASSEMBLY__ \
+		$(if $(filter bpf-persistent,$(1)),-DKNOD_PERSISTENT,) \
 		-DKNOD_ISA=$(2) $(BUILD)/$(1).$(2).cat.S -o $$@
 
 $(BUILD)/$(1).$(2).o: $(BUILD)/$(1).$(2).s
@@ -76,7 +79,7 @@ $(BUILD)/$(1).$(2).text: $(BUILD)/$(1).$(2).o
 
 $(BUILD)/knod-$(1)-gfx$(2).bin: $(BUILD)/$(1).$(2).text $(BUILD)/$(1).$(2).o \
 				tools/pack.py $(ABI_HDR)
-	python3 tools/pack.py --isa $(2) --wave 64 \
+	python3 tools/pack.py --isa $(2) --wave 64 $(if $(filter bpf-persistent,$(1)),--persistent,) \
 		--text $$< --obj $(BUILD)/$(1).$(2).o -o $$@
 
 dis-$(1)-$(2): $(BUILD)/$(1).$(2).o
@@ -86,6 +89,7 @@ endef
 
 $(foreach f,$(FEATURES),\
   $(foreach i,$(ISAS),$(eval $(call isa_rules,$(f),$(i)))))
+$(eval $(call isa_rules,bpf-persistent,10))
 
 $(BUILD):
 	mkdir -p $@

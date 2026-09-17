@@ -5,6 +5,9 @@
 
 #ifndef EPILOGUE_INC
 #define EPILOGUE_INC
+#ifdef KNOD_PERSISTENT
+#include <linux/knod_persistent.h>
+#endif
 
 	.macro KNOD_EPILOGUE_PRE_BODY
 #ifdef KNOD_CYCLES
@@ -144,7 +147,39 @@
 	global_store_dword v[SLOT:SLOT+1], v[P0], off \
 			   offset:(KNOD_BLOB_BD_PROBE + 8)
 #endif
+#ifdef KNOD_PERSISTENT
+	// Each physical wave finishes its packet writes before WG convergence.
+	// Empty packet waves also arrive here; INITIAL_EXEC is not a barrier mask.
+	s_waitcnt vmcnt(0) lgkmcnt(0)
+	s_waitcnt_vscnt null, 0
+	s_mov_b64 exec, -1
+	s_barrier
+	s_cmp_eq_u32 s0, 0
+	s_cbranch_scc0 .Lpersistent_next\@
+	s_mov_b64 exec, 1
+	// One writer per WG and publication slot; no system atomic counter.
+	s_lshl_b32 s[PS0], s[WG_Y], 3
+	s_lshl_b32 s[PS1], s2, 9
+	s_add_u32 s[PS0], s[PS0], s[PS1]
+	s_add_u32 s[PS0], s[PS0], (KNOD_PERSIST_SLOT_BASE + KNOD_PERSIST_DONE)
+	v_mov_b32 v[P0], s8
+	v_mov_b32 v[P1], s9
+	v_add_co_u32 v[P0], vcc, s[PS0], v[P0]
+	V_ADD_CI_U32 v[P1], vcc, 0, v[P1], vcc
+	v_mov_b32 v[P2], s10
+	v_mov_b32 v[P3], s11
+	global_store_dwordx2 v[P0:P0+1], v[P2:P2+1], off glc slc
+	s_waitcnt_vscnt null, 0
+.Lpersistent_next\@:
+	s_add_u32 s10, s10, 1
+	s_addc_u32 s11, s11, 0
+	s_add_u32 s2, s2, 1
+	s_cmp_eq_u32 s2, KNOD_PERSIST_SLOTS
+	s_cselect_b32 s2, 0, s2
+	s_setpc_b64 s[6:7]
+#else
 	s_endpgm
+#endif
 	.endm
 
 #endif /* EPILOGUE_INC */
